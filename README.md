@@ -66,6 +66,34 @@ PYTHONPATH=src python3 -m photon_fab.api --database photon.sqlite3 --port 8080
 
 HTTP 健康检查为 `GET /health`，登录、批次、测量和分析请求均支持 JSON；服务不访问外部网络，可在单个 Linux 应用容器中完成验收。
 
+### 封测线离线批量导入
+
+封测线每天产生 JSONL 文件，每行一条芯片封测记录：芯片编号 `chip_id`、波长、响应度、暗电流和仪器编号 `instrument_id`。带单位的测量值写作 `{"value": ..., "unit": ...}`：
+
+- 波长单位仅接受 `nm`（同时接受扁平字段 `wavelength_nm`）；
+- 响应度单位仅接受 `A/W`（同时接受 `responsivity_aw`）；
+- 暗电流接受 `A`、`uA`/`µA`/`μA`、`nA`、`pA`，入库时统一换算为安培（同时接受 `dark_current_a`）；
+- 数值必须为有限 JSON 数，并通过物理合理性范围检查。
+
+示例文件见 `fixtures/demo_chip_tests.jsonl`。两种离线导入方式：
+
+```bash
+# 命令行（纯离线，不启动 HTTP 服务）
+PYTHONPATH=src python3 -m photon_fab.import_cli --database photon.sqlite3 --file fixtures/demo_chip_tests.jsonl
+
+# HTTP：直接上传 application/x-ndjson，或用 application/json 封装 {"source_name", "content":[行对象...]}
+curl -X POST 127.0.0.1:8080/chip-tests/import -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/x-ndjson" -H "X-Import-Source: 2026-09-24.jsonl" \
+  --data-binary @fixtures/demo_chip_tests.jsonl
+```
+
+语义保证：
+
+- 逐行校验，任意一行非法（含 JSON 解析失败、字段/单位错误、同一文件内芯片编号重复）都会整批拒绝，`chip_tests` 不留下半批数据；
+- 全部合法时在单个 SQLite 事务中写入；已存在的 `chip_id` 视为重复行，不覆盖，返回库中原记录；
+- 结果按物理行号报告 `succeeded` / `duplicates`（含原记录）/ `failed`（含逐行原因），HTTP 对被拒绝批次返回 `422` 并在响应体中给出同样的报告，CLI 退出码为 `2`；
+- 每次导入（无论完成还是拒绝）恰好写入一次 `import_audits` 审计事件，记录来源名、操作者、输入 SHA-256、行号归类和明细，可通过 `GET /imports/<id>` 追溯。
+
 ## HTTP 服务
 
 ```bash

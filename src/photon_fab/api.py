@@ -6,6 +6,7 @@ import argparse
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from .importer import ImportRejected
 from .service import PhotonService
 
 
@@ -29,11 +30,32 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, self.service.get_lot(token, self.path.split("/", 2)[2]))
             except Exception as exc:
                 return self._json(400, {"error": str(exc)})
+        if self.path.startswith("/imports/"):
+            try:
+                token = self.headers.get("Authorization", "").removeprefix("Bearer ")
+                audit_id = int(self.path.rsplit("/", 1)[1])
+                return self._json(200, self.service.get_import_audit(token, audit_id))
+            except Exception as exc:
+                return self._json(400, {"error": str(exc)})
         return self._json(404, {"error": "not found"})
 
     def do_POST(self):
         try:
-            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
+            raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            if self.path == "/chip-tests/import":
+                token = self.headers.get("Authorization", "").removeprefix("Bearer ")
+                source_name = self.headers.get("X-Import-Source", "http-upload")
+                content_type = self.headers.get("Content-Type", "")
+                if "application/json" in content_type and "ndjson" not in content_type:
+                    payload = json.loads(raw or b"{}")
+                    source_name = payload.get("source_name", source_name)
+                    content = payload.get("content", "")
+                    if isinstance(content, list):
+                        content = "\n".join(json.dumps(item, ensure_ascii=False) for item in content)
+                else:
+                    content = raw.decode("utf-8")
+                return self._json(200, self.service.import_chip_tests(token, source_name, content))
+            body = json.loads(raw)
             if self.path == "/login":
                 return self._json(200, {"token": self.service.auth.login(body["user_id"], body["password"])})
             token = self.headers.get("Authorization", "").removeprefix("Bearer ")
@@ -45,6 +67,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.path.startswith("/lots/") and self.path.endswith("/analysis"):
                 return self._json(200, self.service.analyze(token, self.path.split("/")[2]))
             return self._json(404, {"error": "not found"})
+        except ImportRejected as exc:
+            return self._json(422, {"error": "import_rejected", "import_result": exc.report})
         except PermissionError as exc:
             return self._json(403, {"error": str(exc)})
         except Exception as exc:

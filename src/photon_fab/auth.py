@@ -9,6 +9,8 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from .storage import write_lock
+
 
 ROLES = {"operator", "engineer", "quality", "admin"}
 PERMISSIONS = {
@@ -46,8 +48,9 @@ class Auth:
         if role not in ROLES or len(password) < 8:
             raise ValueError("invalid role or password")
         salt = secrets.token_hex(16)
-        self.db.execute("INSERT INTO users VALUES(?,?,?,?,1,?)", (user_id, role, salt, _hash(password, salt), datetime.now(timezone.utc).isoformat()))
-        self.db.commit()
+        with write_lock(self.db):
+            self.db.execute("INSERT INTO users VALUES(?,?,?,?,1,?)", (user_id, role, salt, _hash(password, salt), datetime.now(timezone.utc).isoformat()))
+            self.db.commit()
         return User(user_id, role, True)
 
     def login(self, user_id: str, password: str) -> str:
@@ -55,8 +58,9 @@ class Auth:
         if not row or not row[3] or not hmac.compare_digest(_hash(password, row[1]), row[2]):
             raise PermissionError("invalid credentials")
         token = secrets.token_urlsafe(24)
-        self.db.execute("INSERT INTO sessions VALUES(?,?,datetime('now','+8 hours'),1)", (token, user_id))
-        self.db.commit()
+        with write_lock(self.db):
+            self.db.execute("INSERT INTO sessions VALUES(?,?,datetime('now','+8 hours'),1)", (token, user_id))
+            self.db.commit()
         return token
 
     def current(self, token: str) -> User:
@@ -74,6 +78,7 @@ class Auth:
         return user
 
     def deactivate(self, user_id: str) -> None:
-        self.db.execute("UPDATE users SET active=0 WHERE user_id=?", (user_id,))
-        self.db.execute("UPDATE sessions SET active=0 WHERE user_id=?", (user_id,))
-        self.db.commit()
+        with write_lock(self.db):
+            self.db.execute("UPDATE users SET active=0 WHERE user_id=?", (user_id,))
+            self.db.execute("UPDATE sessions SET active=0 WHERE user_id=?", (user_id,))
+            self.db.commit()
