@@ -66,6 +66,50 @@ PYTHONPATH=src python3 -m photon_fab.api --database photon.sqlite3 --port 8080
 
 HTTP 健康检查为 `GET /health`，登录、批次、测量和分析请求均支持 JSON；服务不访问外部网络，可在单个 Linux 应用容器中完成验收。
 
+### 封测线 JSONL 离线批量导入
+
+封测线每天产生一个 JSONL 文件，每行一条芯片封测记录，字段名携带计量单位：
+
+| 字段 | 含义 | 单位 | 约束 |
+| --- | --- | --- | --- |
+| `chip_id` | 芯片编号 | — | 非空文本，全局唯一 |
+| `wavelength_nm` | 波长 | nm | 200–10000 |
+| `responsivity_a_w` | 响应度 | A/W | 0–100 |
+| `dark_current_a` | 暗电流 | A | 0 ≤ 值 < 1 |
+| `instrument_id` | 仪器编号 | — | 非空文本 |
+
+只接受上述精确字段名：缺少字段、多出字段（例如把微米值写成 `wavelength_um`）、
+字符串/布尔数值、`NaN`/`Infinity`、重复 JSON 键或超量程数值都会令该行非法。
+
+导入语义：
+
+- **逐行校验**：按物理行号报告，空行跳过但不改变行号；
+- **单事务原子写入**：只要存在任意非法行，整批拒绝，`chip_test_records` 业务表零写入，不留下半批数据；
+- **重复行幂等**：芯片编号已存在且内容指纹（SHA-256）一致时不重复写入，结果中带回原记录；同编号内容不一致判为冲突失败行；`1310` 与 `1310.0` 等等价数值写法视为同一记录；
+- **结果报告**：返回并持久化总行数、成功/重复/失败行号、每条失败原因，以及每个重复行对应的原记录；
+- **导入审计**：无论接受（`accepted`）还是拒绝（`rejected`），都在 `imports` 表写入一次带操作者、UTC 时间、备注、源文件 SHA-256 和分类行号的可追溯事件。
+
+离线命令行（不启动任何服务、不访问网络）：
+
+```bash
+PYTHONPATH=src python3 -m photon_fab.import_cli \
+  --database photon.sqlite3 --file fixtures/chip_test_demo.jsonl \
+  --bootstrap-admin --note "2026-09-24 封测日报"
+# 退出码 0：全部合法（可能含重复行）；2：存在非法行，整批拒绝
+```
+
+HTTP 接口（请求体为原始 JSONL，`Content-Type: application/x-ndjson`）：
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/chip-imports \
+  -H "Authorization: Bearer $TOKEN" -H "X-Import-Note: 封测日报" \
+  -H "Content-Type: application/x-ndjson" --data-binary @fixtures/chip_test_demo.jsonl
+# 200 accepted；422 rejected（响应体仍含逐行报告与 import_id）
+curl -s http://127.0.0.1:8080/chip-imports/$IMPORT_ID -H "Authorization: Bearer $TOKEN"
+```
+
+需要 `measure` 权限（操作员、工程师、质量、管理员角色均具备）。
+
 ## HTTP 服务
 
 ```bash

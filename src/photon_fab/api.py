@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import argparse
 import json
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from .service import PhotonService
+from .service import BatchRejected, PhotonService
+
+
+# 单线程服务器：所有请求复用同一个 SQLite 连接，且连接始终在本线程使用，
+# 规避跨线程连接限制；离线批量后台没有慢速外部调用，串行处理即足够。
+Server = HTTPServer
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -23,6 +28,17 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
             return self._json(200, {"status": "ok", "service": "photon-fab"})
+        if self.path.startswith("/chip-imports/"):
+            import_id = self.path.split("/", 2)[2]
+            token = self.headers.get("Authorization", "").removeprefix("Bearer ")
+            try:
+                return self._json(200, self.service.get_import(token, import_id))
+            except PermissionError as exc:
+                return self._json(403, {"error": str(exc)})
+            except KeyError:
+                return self._json(404, {"error": "import not found"})
+            except Exception as exc:
+                return self._json(400, {"error": str(exc)})
         if self.path.startswith("/lots/"):
             try:
                 token = self.headers.get("Authorization", "").removeprefix("Bearer ")
@@ -33,7 +49,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         try:
-            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
+            raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            if self.path == "/chip-imports":
+                # 请求体是原始 JSONL（Content-Type: application/x-ndjson）。
+                token = self.headers.get("Authorization", "").removeprefix("Bearer ")
+                note = self.headers.get("X-Import-Note")
+                try:
+                    report = self.service.import_chip_records(token, raw.decode("utf-8"), note)
+                except BatchRejected as rejected:
+                    return self._json(422, rejected.report)
+                return self._json(200, report)
+            body = json.loads(raw)
             if self.path == "/login":
                 return self._json(200, {"token": self.service.auth.login(body["user_id"], body["password"])})
             token = self.headers.get("Authorization", "").removeprefix("Bearer ")
@@ -59,7 +85,8 @@ def main() -> None:
     args = parser.parse_args()
     Handler.service = PhotonService(args.database)
     Handler.service.bootstrap_admin()
-    ThreadingHTTPServer((args.host, args.port), Handler).serve_forever()
+    # serve_forever 与上面的连接创建都在主线程，请求被串行分发，连接永不跨线程。
+    Server((args.host, args.port), Handler).serve_forever()
 
 
 if __name__ == "__main__":

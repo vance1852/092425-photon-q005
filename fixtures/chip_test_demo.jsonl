@@ -1,0 +1,4 @@
+{"chip_id":"PIC-A-0001","wavelength_nm":1310.0,"responsivity_a_w":0.82,"dark_current_a":0.000000012,"instrument_id":"ils-07"}
+{"chip_id":"PIC-A-0002","wavelength_nm":1310.0,"responsivity_a_w":0.85,"dark_current_a":0.000000009,"instrument_id":"ils-07"}
+{"chip_id":"PIC-A-0003","wavelength_nm":1550.0,"responsivity_a_w":0.91,"dark_current_a":0.000000021,"instrument_id":"ils-08"}
+{"chip_id":"PIC-A-0004","wavelength_nm":1550.0,"responsivity_a_w":0.88,"dark_current_a":0.000000015,"instrument_id":"ils-08"}

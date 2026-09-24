@@ -25,6 +25,17 @@ CREATE TABLE IF NOT EXISTS lot_events(
 CREATE TABLE IF NOT EXISTS approvals(
  lot_id TEXT NOT NULL, reviewer TEXT NOT NULL, decision TEXT NOT NULL,
  reason TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(lot_id,reviewer));
+CREATE TABLE IF NOT EXISTS chip_test_records(
+ chip_id TEXT PRIMARY KEY, wavelength_nm REAL NOT NULL,
+ responsivity_a_w REAL NOT NULL, dark_current_a REAL NOT NULL,
+ instrument_id TEXT NOT NULL, imported_by TEXT NOT NULL, imported_at TEXT NOT NULL,
+ content_sha256 TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS imports(
+ import_id TEXT PRIMARY KEY, status TEXT NOT NULL, total_lines INTEGER NOT NULL,
+ inserted_count INTEGER NOT NULL, duplicate_count INTEGER NOT NULL,
+ failed_count INTEGER NOT NULL, inserted_lines TEXT NOT NULL, duplicate_lines TEXT NOT NULL,
+ failed_lines TEXT NOT NULL, duplicates_json TEXT NOT NULL, failures_json TEXT NOT NULL,
+ actor TEXT NOT NULL, source_sha256 TEXT NOT NULL, created_at TEXT NOT NULL, note TEXT);
 """
 
 
